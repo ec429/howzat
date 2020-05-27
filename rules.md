@@ -45,7 +45,11 @@ Otherwise, the batsman's roll is interpreted as follows:
 3. No run (dot ball).
 4. Four runs.
 5. _Howzat!_
-6. Six runs, **unless** Byes or Leg Byes in which case No run.
+6. Six runs, **unless** bowler rolled twice in which case No run.
+
+(Thus, none of six byes, six leg byes, or seven no balls is possible;
+moreover, 1-5-6 or 1-6-6 are dot balls, whereas 1-5-4 and 1-6-4 are fours.
+This should make sixes a little less common than fours.)
 
 On a roll of 5 (_Howzat!_), the bowler's roll is then consulted:
 

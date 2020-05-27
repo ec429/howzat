@@ -5,7 +5,6 @@ EXTRA_NB = 1
 EXTRA_W = 2
 EXTRA_B = 3
 EXTRA_LB = 4
-EXTRA_MAX = 5
 
 class Wicket(object):
     def __init__(self, how, who=None, cab=False):
@@ -58,8 +57,8 @@ class Ball(object):
             print("No-Ball called")
         elif extra == EXTRA_W:
             print("Wide ball")
-        # No sixes off Byes or Leg Byes; dot ball instead
-        if (self.b or self.lb) and self.runs == 6:
+        # No sixes off potential Extras; dot ball instead
+        if (extra is not None) and self.runs == 6:
             self.runs = 0
         if not self.runs:
             self.b = False
@@ -78,8 +77,6 @@ class Ball(object):
         if bowl == 1:
             # possible Extra; roll again
             extra = bowler.roll_d6()
-            if extra >= EXTRA_MAX:
-                extra = None
         if extra == EXTRA_W: # Batsman does not roll
             return cls(bowler, batsman, 0, extra=extra)
         bat = batsman.roll_d6()
@@ -145,59 +142,6 @@ class Ball(object):
         if self.runs:
             return str(self.runs)
         return '.'
-
-class Player(object):
-    def __init__(self, name):
-        self.name = name
-        self.innings = []
-        self.bowling = []
-        self.rng = random.Random(hash(self.name))
-        self.out = None
-    def roll_d6(self, _print=True):
-        r = self.rng.randint(1, 6)
-        if _print:
-            # U+2680 DIE FACE-1 and friends
-            print("%s rolled d6 %s" % (self.name, chr(0x267f + r)))
-        return r
-    def roll_2d6(self):
-        a = self.roll_d6(False)
-        b = self.roll_d6(False)
-        r = a + b
-        print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
-        return r
-    @property
-    def score(self): # with bat
-        return sum(b.bat_runs for b in self.innings)
-    @property
-    def wkts(self):
-        return sum(o.wkts for o in self.bowling)
-    @property
-    def runs(self): # conceded as bowler
-        return sum(o.runs for o in self.bowling)
-    @property
-    def maidens(self):
-        return len([o for o in self.bowling if not o.runs and not o.to_come])
-    @property
-    def nb(self):
-        return sum(o.nb for o in self.bowling)
-    @property
-    def w(self):
-        return sum(o.w for o in self.bowling)
-
-class Team(object):
-    def __init__(self, name, players):
-        assert len(players) == 11, players
-        self.name = name
-        self.players = players
-        # For now, hardcode the batting-order and fielding-positions
-        self.border = list(players)
-        self.field = list(players)
-    @classmethod
-    def short(cls, prefix):
-        return cls(prefix, [Player("%s%d" % (prefix, i + 1)) for i in range(11)])
-
-TA = Team.short("TA")
-TB = Team.short("TB")
 
 class Over(object):
     def __init__(self, inns):
@@ -323,23 +267,80 @@ class Innings(object):
                 banal = ' '.join(''.join(b.bowlstr() for b in o.balls) for o in bwl.bowling)
                 print("%s: %s  %so %dm %d/%d%s" % (bwl.name, banal, over.over(len(bwl.bowling)), bwl.maidens, bwl.runs, bwl.wkts, exs))
 
-IA = Innings(TA, TB)
-while IA.in_play:
-    IA.bowl()
-print()
-IA.batting_summary()
-IA.bowling_summary()
-print()
-IB = Innings(TB, TA, IA.total)
-while IB.in_play:
-    IB.bowl()
-print()
-IB.batting_summary()
-IB.bowling_summary()
-print()
-if IA.total > IB.total:
-    print("%s beat %s by %d runs" % (TA.name, TB.name, IA.total - IB.total))
-elif IB.total > IA.total:
-    print("%s beat %s by %d wickets" % (TB.name, TA.name, 1 + len(IB.border)))
-else:
-    print("%s and %s tied" % (TA.name, TB.name))
+class Player(object):
+    def __init__(self, name):
+        self.name = name
+        self.innings = []
+        self.bowling = []
+        self.rng = random.Random(self.name)
+        self.out = None
+    def roll_d6(self, _print=True):
+        r = self.rng.randint(1, 6)
+        if _print:
+            # U+2680 DIE FACE-1 and friends
+            print("%s rolled d6 %s" % (self.name, chr(0x267f + r)))
+        return r
+    def roll_2d6(self):
+        a = self.roll_d6(False)
+        b = self.roll_d6(False)
+        r = a + b
+        print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
+        return r
+    @property
+    def score(self): # with bat
+        return sum(b.bat_runs for b in self.innings)
+    @property
+    def wkts(self):
+        return sum(o.wkts for o in self.bowling)
+    @property
+    def runs(self): # conceded as bowler
+        return sum(o.runs for o in self.bowling)
+    @property
+    def maidens(self):
+        return len([o for o in self.bowling if not o.runs and not o.to_come])
+    @property
+    def nb(self):
+        return sum(o.nb for o in self.bowling)
+    @property
+    def w(self):
+        return sum(o.w for o in self.bowling)
+
+class Team(object):
+    def __init__(self, name, players):
+        assert len(players) == 11, players
+        self.name = name
+        self.players = players
+        # For now, hardcode the batting-order and fielding-positions
+        self.border = list(players)
+        self.field = list(players)
+    @classmethod
+    def short(cls, prefix):
+        return cls(prefix, [Player("%s%d" % (prefix, i + 1)) for i in range(11)])
+
+def test():
+    """Test-run: play a match between two placeholder teams"""
+    TA = Team.short("TA")
+    TB = Team.short("TB")
+    IA = Innings(TA, TB)
+    while IA.in_play:
+        IA.bowl()
+    print()
+    IA.batting_summary()
+    IA.bowling_summary()
+    print()
+    IB = Innings(TB, TA, IA.total)
+    while IB.in_play:
+        IB.bowl()
+    print()
+    IB.batting_summary()
+    IB.bowling_summary()
+    print()
+    if IA.total > IB.total:
+        print("%s beat %s by %d runs" % (TA.name, TB.name, IA.total - IB.total))
+    elif IB.total > IA.total:
+        print("%s beat %s by %d wickets" % (TB.name, TA.name, 1 + len(IB.border)))
+    else:
+        print("%s and %s tied" % (TA.name, TB.name))
+
+if __name__ == '__main__':
+    test()
