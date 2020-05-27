@@ -182,10 +182,8 @@ class Innings(object):
         self.border = list(self.bteam.border)
         self.non_striker = self.border.pop(0)
         self.striker = self.border.pop(0)
-        # For now, first two fielders do all the bowling
-        # TODO UI to let the fielding captain change this
-        self.resting = self.fteam.field[0]
-        self.bowling = self.fteam.field[1]
+        self.resting = None
+        self.bowling = None
         self.total = 0
         self.b = 0 # Byes
         self.lb = 0 # Leg Byes
@@ -193,10 +191,25 @@ class Innings(object):
         self.overs = []
         self.new_over()
         self.in_play = True
+    def legal_bowlers(self, last):
+        return [p for p in self.fteam.players if len(p.bowling) < 4 and p != last]
     def swap_strike(self):
         self.striker, self.non_striker = self.non_striker, self.striker
     def new_over(self):
         self.bowling, self.resting = self.resting, self.bowling
+        self.fteam.field[0], self.fteam.field[1] = self.fteam.field[1], self.fteam.field[0]
+        legal = self.legal_bowlers(self.resting)
+        if self.bowling not in legal or self.fteam.captain.change_bowler(self.bowling):
+            bowl = self.fteam.captain.choose_bowler(legal)
+            bi = self.fteam.field.index(bowl)
+            self.fteam.field[0], self.fteam.field[bi] = self.fteam.field[bi], self.fteam.field[0]
+            self.bowling = bowl
+        if self.bowling.keeper:
+            keep = self.fteam.captain.choose_keeper([p for p in self.fteam if p != self.bowling])
+            ki = self.fteam.field.index(keep)
+            self.bowling.keeper = False
+            keep.keeper = True
+            self.fteam.field[ki], self.fteam.field[6] = self.fteam.field[6], self.fteam.field[ki]
         self.swap_strike()
         self.overs.append(Over(self))
         if self.chasing is None:
@@ -204,6 +217,8 @@ class Innings(object):
         else:
             chase = " - %d required" % (self.chasing + 1 - self.total)
         print("Over %d; %d/%d.  %s to %s (%s off strike)%s" % (len(self.overs), self.total, len(self.fow), self.bowling.name, self.striker.name, self.non_striker.name, chase))
+        if not self.bowling.first_over:
+            self.bowling.first_over = len(self.overs)
     @property
     def over(self):
         return self.overs[-1]
@@ -258,7 +273,7 @@ class Innings(object):
         print("Total: %d%s (%s ovs)" % (self.total, fer, self.odesc))
         print("FOW: %s" % ('; '.join(map(sfow, enumerate(self.fow)))))
     def bowling_summary(self):
-        for bwl in self.fteam.field:
+        for bwl in sorted(self.fteam.field, key=lambda p:p.first_over):
             if bwl.bowling:
                 over = bwl.bowling[-1]
                 exes = []
@@ -280,6 +295,8 @@ class Player(object):
         self.innings = []
         self.bowling = []
         self.out = None
+        self.keeper = False
+        self.first_over = 0
     def flip_coin(self, prompt=None):
         return bool(self.randint(0, 1))
     def do_roll_d6(self, prompt=None):
@@ -328,6 +345,16 @@ class DeterministicPlayer(Player):
     def choose_to_bat(self):
         # Always bat first
         return True
+    def change_bowler(self, curr):
+        # Don't change bowling unless you have to
+        return False
+    def choose_bowler(self, legal):
+        nk = [p for p in legal if not p.keeper]
+        # Always pick the lowest-batting legal bowler, excluding the keeper
+        return nk[-1]
+    def choose_keeper(self, legal):
+        # Select #7 batsman as keeper
+        return legal[6]
 
 class RandomPlayer(Player):
     def __init__(self, name):
@@ -339,6 +366,16 @@ class RandomPlayer(Player):
         return self.randint(0, 1)
     def choose_to_bat(self):
         return self.randint(0, 1)
+    def change_bowler(self, curr):
+        # 1 in 3 chance to change bowler without being forced
+        return not self.randint(0, 2)
+    def choose_bowler(self, legal):
+        nk = [p for p in legal if not p.keeper]
+        # Prefer lower-batting players as bowlers
+        return self.rng.choice(nk + nk[-4:])
+    def choose_keeper(self, legal):
+        # Select #7 batsman as keeper
+        return legal[6]
 
 class ConsolePlayer(Player):
     def randint(self, a, b, prompt=None):
@@ -366,6 +403,40 @@ class ConsolePlayer(Player):
             if l in ("bowl", "field"):
                 return False
             print("Please specify either Bat, Bowl or Field.")
+    def yn(self):
+        while True:
+            l = input().strip().lower()
+            if l in ("yes", "y", "true", "t"):
+                return True
+            if l in ("no", "n", "false", "f"):
+                return False
+            print("Please enter Y or N.")
+    def change_bowler(self, curr):
+        print("%s still has overs left.  Change bowler?" % (curr.name,))
+        return self.yn()
+    def choose_bowler(self, legal):
+        print("Choose a bowler.  Available: %s." % ', '.join(p.name for p in legal))
+        while True:
+            l = input().strip().lower()
+            for p in legal:
+                if p.name.lower() == l:
+                    if p.keeper:
+                        print("%s is currently keeping wicket.  Are you sure?" % (p.name,))
+                        if not self.yn():
+                            print("Choose a bowler.")
+                            break
+                    return p
+            else:
+                print("Player not found.  Please choose a bowler from the available list.")
+    def choose_keeper(self, legal):
+        print("Choose a wicketkeeper.\nAvailable: %s." % ', '.join(p.name for p in legal))
+        while True:
+            l = input().strip().lower()
+            for p in legal:
+                if p.name.lower() == l:
+                    return p
+            else:
+                print("Player not found.  Please choose a wicketkeeper from the available list.")
 
 class Team(object):
     def __init__(self, name, players):
@@ -376,6 +447,10 @@ class Team(object):
         # For now, hardcode the batting-order and fielding-positions
         self.border = list(players)
         self.field = list(players)
+        keep = self.captain.choose_keeper(self.field)
+        keep.keeper = True
+        ki = self.field.index(keep)
+        self.field[6], self.field[ki] = self.field[ki], self.field[6]
     @classmethod
     def rand(cls, prefix):
         return cls("Randoms", [RandomPlayer("%s%d" % (prefix, i + 1)) for i in range(11)])
@@ -443,4 +518,4 @@ def cons_vs_rand():
     play_match(TA, TB)
 
 if __name__ == '__main__':
-    test()#cons_vs_rand()
+    cons_vs_rand()
