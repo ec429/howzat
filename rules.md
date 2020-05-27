@@ -66,7 +66,10 @@ batsman to be Run Out off a No-Ball, which can occur in real cricket.)
 ### Catching the ball
 
 The batsman rolls 2d6 to determine which fielder is under it.  (Fielding
-position 7, the most likely, is the wicketkeeper; positions 2 and 12 are
-the currently active bowlers.)  Then, that fielder rolls a d6 to attempt
-the catch.  On a 1 or 2, the catch is dropped; on any other result, it is
-successfully caught and the batsman is out.
+position 7, the most likely, is the wicketkeeper; position 12 is the
+current bowler, while position 2 defaults to the bowler of the previous
+over if any.)
+
+Then, that fielder rolls a d6 to attempt the catch.  On a 1 or 2, the
+catch is dropped; on any other result, it is successfully caught and the
+batsman is out.
