@@ -71,6 +71,7 @@ class Ball(object):
         self.total_runs = self.runs + int(self.nb) + int(self.w)
         self.bat_runs = 0 if self.b or self.lb else self.runs
         self.bwl_runs = 0 if self.b or self.lb else self.total_runs
+        self.legal = not self.nb and not self.w
     @classmethod
     def roll(cls, bowler, batsman, field):
         bowl = bowler.roll_d6(prompt="Roll to bowl to "+batsman.name)
@@ -258,7 +259,7 @@ class Innings(object):
             if bat in self.border:
                 print("%s  did not bat" % (bat.name,))
             else:
-                print("%s  %s  %s%d (%d)" % (bat.name, ''.join(b.batstr() for b in bat.innings).replace('..', ':'), '' if bat.out else 'not  out  ', bat.score, len(bat.innings)))
+                print("%s  %s  %s%d (%d)" % (bat.name, ''.join(b.batstr() for b in bat.innings).replace('..', ':'), '' if bat.out else 'not  out  ', bat.score, bat.faced))
         def sfow(fow):
             i, fow = fow
             bat, tot, ovs = fow
@@ -313,14 +314,19 @@ class Player(object):
         r = a + b
         print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
         return r
+    # Batting stats
     @property
-    def score(self): # with bat
+    def score(self):
         return sum(b.bat_runs for b in self.innings)
+    @property
+    def faced(self):
+        return len([b for b in self.innings if b.legal])
+    # Bowling stats
     @property
     def wkts(self):
         return sum(o.wkts for o in self.bowling)
     @property
-    def runs(self): # conceded as bowler
+    def runs(self): # conceded
         return sum(o.runs for o in self.bowling)
     @property
     def maidens(self):
