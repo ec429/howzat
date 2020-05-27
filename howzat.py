@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import random
+import time
 
 EXTRA_NB = 1
 EXTRA_W = 2
@@ -21,10 +22,10 @@ class Wicket(object):
             return cls("bowled")
         if bowl == 3:
             # batsman: 2d6 to decide where he hits it.  12 goes to 1
-            fielder = field[(batsman.roll_2d6() - 1) % 11]
+            fielder = field[(batsman.roll_2d6(prompt="Roll 2d6 to pick fielder") - 1) % 11]
             print("In the air to %s..." % (fielder.name,))
             # fielder: roll d6 to catch, drop on 1 or 2
-            if fielder.roll_d6() > 2:
+            if fielder.roll_d6(prompt="Roll to attempt the catch") > 2:
                 return cls("caught", fielder, fielder == bowler)
             print("Dropped it!")
             return None
@@ -72,14 +73,14 @@ class Ball(object):
         self.bwl_runs = 0 if self.b or self.lb else self.total_runs
     @classmethod
     def roll(cls, bowler, batsman, field):
-        bowl = bowler.roll_d6()
+        bowl = bowler.roll_d6(prompt="Roll to bowl to "+batsman.name)
         extra = None
         if bowl == 1:
             # possible Extra; roll again
-            extra = bowler.roll_d6()
+            extra = bowler.roll_d6(prompt="Roll for extras")
         if extra == EXTRA_W: # Batsman does not roll
             return cls(bowler, batsman, 0, extra=extra)
-        bat = batsman.roll_d6()
+        bat = batsman.roll_d6(prompt="Roll to play the ball")
         if bat == 5: # Wicket
             return cls(bowler, batsman, 0, Wicket.roll(bowl, bowler, batsman, field), extra=extra)
         if bat == 3: # No run
@@ -188,9 +189,9 @@ class Innings(object):
         self.total = 0
         self.b = 0 # Byes
         self.lb = 0 # Leg Byes
+        self.fow = []
         self.overs = []
         self.new_over()
-        self.fow = []
         self.in_play = True
     def swap_strike(self):
         self.striker, self.non_striker = self.non_striker, self.striker
@@ -198,7 +199,11 @@ class Innings(object):
         self.bowling, self.resting = self.resting, self.bowling
         self.swap_strike()
         self.overs.append(Over(self))
-        print("Over %d; %s to %s" % (len(self.overs), self.bowling.name, self.striker.name))
+        if self.chasing is None:
+            chase = ""
+        else:
+            chase = " - %d required" % (self.chasing + 1 - self.total)
+        print("Over %d; %d/%d.  %s to %s (%s off strike)%s" % (len(self.overs), self.total, len(self.fow), self.bowling.name, self.striker.name, self.non_striker.name, chase))
     @property
     def over(self):
         return self.overs[-1]
@@ -211,7 +216,7 @@ class Innings(object):
         ball = Ball.roll(self.bowling, self.striker, self.fteam.field)
         self.over.deliver(ball)
         self.striker.innings.append(ball)
-        print("%s %s" % (self.striker.name, ball))
+        print(str(ball))
         if ball.wicket:
             self.striker.out = ball
             self.fow.append((self.striker, self.total, self.odesc))
@@ -242,16 +247,16 @@ class Innings(object):
         def sfow(fow):
             i, fow = fow
             bat, tot, ovs = fow
-            return '%d %s %d (%s)' % (i + 1, bat.name, tot, ovs)
+            return '%s %d/%d (%s)' % (bat.name, tot, i + 1, ovs)
         print("Extras: %dnb %dw %db %dlb" % (sum(o.nb for o in self.overs),
                                              sum(o.w for o in self.overs),
                                              self.b, self.lb))
-        print("FOW: %s" % ('; '.join(map(sfow, enumerate(self.fow)))))
         if len(self.fow) == 10:
             fer = " all out"
         else:
             fer = "/%d" % (len(self.fow),)
         print("Total: %d%s (%s ovs)" % (self.total, fer, self.odesc))
+        print("FOW: %s" % ('; '.join(map(sfow, enumerate(self.fow)))))
     def bowling_summary(self):
         for bwl in self.fteam.field:
             if bwl.bowling:
@@ -274,17 +279,20 @@ class Player(object):
         self.name = name
         self.innings = []
         self.bowling = []
-        self.rng = random.Random(self.name)
         self.out = None
-    def roll_d6(self, _print=True):
-        r = self.rng.randint(1, 6)
-        if _print:
-            # U+2680 DIE FACE-1 and friends
-            print("%s rolled d6 %s" % (self.name, chr(0x267f + r)))
+    def flip_coin(self, prompt=None):
+        return bool(self.randint(0, 1))
+    def do_roll_d6(self, prompt=None):
+        return self.randint(1, 6, prompt=prompt)
+    def roll_d6(self, prompt=None):
+        r = self.do_roll_d6(prompt)
+        print("%s rolled d6 %s" % (self.name, chr(0x267f + r)))
         return r
-    def roll_2d6(self):
-        a = self.roll_d6(False)
-        b = self.roll_d6(False)
+    def roll_2d6(self, prompt=None):
+        pa = prompt + " (1)" if prompt else None
+        pb = prompt + " (2)" if prompt else None
+        a = self.do_roll_d6(prompt=pa)
+        b = self.do_roll_d6(prompt=pb)
         r = a + b
         print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
         return r
@@ -307,22 +315,100 @@ class Player(object):
     def w(self):
         return sum(o.w for o in self.bowling)
 
+class DeterministicPlayer(Player):
+    def __init__(self, name):
+        super(DeterministicPlayer, self).__init__(name)
+        # Seed the RNG with our name
+        self.rng = random.Random(self.name)
+    def randint(self, a, b, prompt=None):
+        return self.rng.randint(a, b)
+    def call_toss(self):
+        # Just always call Heads
+        return False
+    def choose_to_bat(self):
+        # Always bat first
+        return True
+
+class RandomPlayer(Player):
+    def __init__(self, name):
+        super(RandomPlayer, self).__init__(name)
+        self.rng = random.Random(time.time())
+    def randint(self, a, b, prompt=None):
+        return self.rng.randint(a, b)
+    def call_toss(self):
+        return self.randint(0, 1)
+    def choose_to_bat(self):
+        return self.randint(0, 1)
+
+class ConsolePlayer(Player):
+    def randint(self, a, b, prompt=None):
+        n = b + 1 - a
+        # Wait for newline
+        input(prompt if prompt else "Roll")
+        # Six-part millisecond wheel
+        t = time.time() % 0.001
+        return (int(t * 1000.0 * n) % n) + a
+    def call_toss(self):
+        print("Heads or Tails?")
+        while True:
+            l = input().strip().lower()
+            if l in ("heads", "h"):
+                return False
+            if l in ("tails", "t"):
+                return True
+            print("Please specify either Heads or Tails.")
+    def choose_to_bat(self):
+        print("Bat or bowl first?")
+        while True:
+            l = input().strip().lower()
+            if l == "bat":
+                return True
+            if l in ("bowl", "field"):
+                return False
+            print("Please specify either Bat, Bowl or Field.")
+
 class Team(object):
     def __init__(self, name, players):
         assert len(players) == 11, players
         self.name = name
         self.players = players
+        self.captain = self.players[0]
         # For now, hardcode the batting-order and fielding-positions
         self.border = list(players)
         self.field = list(players)
     @classmethod
-    def short(cls, prefix):
-        return cls(prefix, [Player("%s%d" % (prefix, i + 1)) for i in range(11)])
+    def rand(cls, prefix):
+        return cls("Randoms", [RandomPlayer("%s%d" % (prefix, i + 1)) for i in range(11)])
+    @classmethod
+    def det(cls, prefix):
+        return cls(prefix, [DeterministicPlayer("%s%d" % (prefix, i + 1)) for i in range(11)])
+    @classmethod
+    def cons(cls, prefix):
+        return cls("Console player", [ConsolePlayer("%s%d" % (prefix, i + 1)) for i in range(11)])
 
-def test():
-    """Test-run: play a match between two placeholder teams"""
-    TA = Team.short("TA")
-    TB = Team.short("TB")
+def toss(TA, TB):
+    # captains
+    CA = TA.captain
+    CB = TB.captain
+    # True is Tails
+    call = CA.call_toss()
+    print("%s called %s" % (CA.name, "tails" if call else "heads"))
+    coin = CB.flip_coin()
+    print("The coin landed %s up" % ("tails" if coin else "heads"))
+    if call == coin:
+        if CA.choose_to_bat():
+            print("%s won the toss and elected to bat" % (TA.name,))
+            return (TA, TB)
+        print("%s won the toss and elected to field" % (TA.name,))
+        return (TB, TA)
+    if CB.choose_to_bat():
+        print("%s won the toss and elected to bat" % (TB.name,))
+        return (TB, TA)
+    print("%s won the toss and elected to field" % (TB.name,))
+    return (TA, TB)
+
+def play_match(TA, TB):
+    TA, TB = toss(TA, TB)
     IA = Innings(TA, TB)
     while IA.in_play:
         IA.bowl()
@@ -344,5 +430,17 @@ def test():
     else:
         print("%s and %s tied" % (TA.name, TB.name))
 
+def test():
+    """Test-run: play a match between two placeholder teams"""
+    TA = Team.det("TA")
+    TB = Team.det("TB")
+    play_match(TA, TB)
+
+def cons_vs_rand():
+    """Console player versus random player"""
+    TA = Team.cons("Con")
+    TB = Team.rand("Opp")
+    play_match(TA, TB)
+
 if __name__ == '__main__':
-    test()
+    test()#cons_vs_rand()
