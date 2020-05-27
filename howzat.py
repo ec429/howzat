@@ -169,6 +169,8 @@ class Over(object):
             return ""
         return ".%d" % (6 - self.to_come,)
     def over(self, onum, ps=False):
+        if self.to_come:
+            onum -= 1
         return "%d%s" % (onum, self.ofrac(ps))
 
 class Innings(object):
