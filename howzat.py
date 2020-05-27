@@ -231,7 +231,7 @@ class Innings(object):
             self.new_over()
         ball = Ball.roll(self.bowling, self.striker, self.fteam.field)
         self.over.deliver(ball)
-        self.striker.innings.append(ball)
+        self.striker.score(ball)
         print(str(ball))
         if ball.wicket:
             self.striker.out = ball
@@ -259,7 +259,12 @@ class Innings(object):
             if bat in self.border:
                 print("%s  did not bat" % (bat.name,))
             else:
-                print("%s  %s  %s%d (%d)" % (bat.name, ''.join(b.batstr() for b in bat.innings).replace('..', ':'), '' if bat.out else 'not  out  ', bat.score, bat.faced))
+                stones = '' # Batting milestones
+                if bat.fifty:
+                    stones = ' [L%d]' % bat.fifty
+                if bat.hundred:
+                    stones += ' [C%d]' % bat.hundred
+                print("%s  %s  %s%d (%d%s)" % (bat.name, ''.join(b.batstr() for b in bat.innings).replace('..', ':'), '' if bat.out else 'not  out  ', bat.scored, bat.faced, stones))
         def sfow(fow):
             i, fow = fow
             bat, tot, ovs = fow
@@ -288,7 +293,7 @@ class Innings(object):
                     exs = ''
                 # Bowling Analysis
                 banal = ' '.join(''.join(b.bowlstr() for b in o.balls) for o in bwl.bowling)
-                print("%s: %s  %so %dm %d/%d%s" % (bwl.name, banal, over.over(len(bwl.bowling)), bwl.maidens, bwl.runs, bwl.wkts, exs))
+                print("%s: %s  %so %dm %d/%d%s" % (bwl.name, banal, over.over(len(bwl.bowling)), bwl.maidens, bwl.conceded, bwl.wkts, exs))
 
 class Player(object):
     def __init__(self, name):
@@ -298,6 +303,8 @@ class Player(object):
         self.out = None
         self.keeper = False
         self.first_over = 0
+        self.fifty = None
+        self.hundred = None
     def flip_coin(self, prompt=None):
         return bool(self.randint(0, 1))
     def do_roll_d6(self, prompt=None):
@@ -314,9 +321,15 @@ class Player(object):
         r = a + b
         print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
         return r
+    def score(self, ball):
+        self.innings.append(ball)
+        if self.fifty is None and self.scored >= 50:
+            self.fifty = self.faced
+        if self.hundred is None and self.scored >= 100:
+            self.hundred = self.faced
     # Batting stats
     @property
-    def score(self):
+    def scored(self):
         return sum(b.bat_runs for b in self.innings)
     @property
     def faced(self):
@@ -326,7 +339,7 @@ class Player(object):
     def wkts(self):
         return sum(o.wkts for o in self.bowling)
     @property
-    def runs(self): # conceded
+    def conceded(self):
         return sum(o.runs for o in self.bowling)
     @property
     def maidens(self):
