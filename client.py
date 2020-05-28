@@ -181,8 +181,8 @@ class Connection(object):
         msg = {'type': 'action', 'action': action}
         msg.update(d)
         self.write_msg(msg)
-    def call_toss(self, heads):
-        self.action('call toss', heads=heads)
+    def call_toss(self, tails):
+        self.action('call toss', tails=tails)
     def call_heads(self):
         self.call_toss(False)
     def call_tails(self):
