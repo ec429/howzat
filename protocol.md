@@ -388,9 +388,9 @@ than their maximum number of overs for the match, except for the bowler of
 the previous over from the other end if any.)
 
 While this request is outstanding, `choose keeper` actions shall also be
-accepted from the client.
+accepted from the client, and shall cause the request to be repeated.
 
-Client: `{'type': 'action', 'action': 'choose bowler', 'bowler': <player-name>, 'keeper': <new-keeper>}`
+Client: `{'type': 'action', 'action': 'choose bowler', 'bowler': <player-name>}`
 
 Selects `player-name` to bowl the next over.
 If there is no player of that name on the team, or that player is not
