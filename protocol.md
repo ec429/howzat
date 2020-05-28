@@ -294,6 +294,10 @@ randomness, the receipt time of this message will be used.
 If a client sends an action (trigger or otherwise) which the server has
 not requested, it will fail with an `error` message.
 
+If the server has requested an action, but the client's attempt to perform
+it fails with an `error` message, the server shall re-send the action
+request.
+
 #### Coin toss
 
 Server: `{'type': 'action', 'action': 'call toss'}`
