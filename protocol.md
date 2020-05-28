@@ -305,22 +305,22 @@ Server: `{'type': 'action', 'action': 'call toss'}`
 Requests the client to call Heads or Tails.
 This request shall only be sent to the team captain.
 
-Client: `{'type': 'action', 'action': 'call toss', 'heads': <bool>}`
+Client: `{'type': 'action', 'action': 'call toss', 'tails': <bool>}`
 
-Call either Heads (if `bool` is true) or Tails (if it is false).
+Call either Tails (if `bool` is true) or Heads (if it is false).
 
 Server: `{'type': 'action', 'action': 'flip coin', 'call': <bool>}`
 
 Requests the client to perform a `flip coin` trigger action.
 This request shall only be sent to the team captain.
-The other captain has called Heads (if `bool` is true) or Tails (if it is
+The other captain has called Tails (if `bool` is true) or Heads (if it is
 false).
 
 Server: `{'type': 'toss', 'caller': <captain-username>, 'call': <call>, 'coin': <coin>}`
 
-The coin was tossed and landed either Heads (if `coin` is true) or Tails
-(if `coin` is false).  This was compared to the call of Heads (if `call`
-is true) or Tails (if `call` is false) made by `captain-username`.
+The coin was tossed and landed either Tails (if `coin` is true) or Heads
+(if `coin` is false).  This was compared to the call of Tails (if `call`
+is true) or Heads (if `call` is false) made by `captain-username`.
 
 #### Toss winner's choice
 

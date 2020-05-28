@@ -184,9 +184,9 @@ class Connection(object):
     def call_toss(self, heads):
         self.action('call toss', heads=heads)
     def call_heads(self):
-        self.call_toss(True)
-    def call_tails(self):
         self.call_toss(False)
+    def call_tails(self):
+        self.call_toss(True)
     def flip_coin(self):
         self.action('flip coin')
     def choose_first(self, bat):
