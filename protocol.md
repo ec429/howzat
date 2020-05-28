@@ -508,3 +508,8 @@ Server: `{'type': 'match', 'winner': <winner-username>, 'loser': <loser-username
 The game has ended.
 The team captained by `winner-username` beat the team captained by
 `loser-username` by `wkt-margin` wickets.
+
+Server: `{'type': 'match', 'abandoned': true}`
+
+The game has ended without a result; either it was abandoned by a captain,
+or it was terminated by the server owing to an unrecoverable error.
