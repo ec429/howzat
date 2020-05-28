@@ -329,7 +329,7 @@ Server: `{'type': 'action', 'action': 'choose first'}`
 Requests the client to choose whether to bat or bowl.
 This request shall only be sent to the team captain who has won the toss.
 
-Client: `{'type': 'action', 'action': 'choose first', 'choice': <bat>}`
+Client: `{'type': 'action', 'action': 'choose first', 'bat': <bat>}`
 
 Chooses that the team shall bat first (if `bat` is true) or bowl/field
 first (if `bat` is false).
