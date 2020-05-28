@@ -2,6 +2,8 @@
 import random
 import time
 
+from coroutine import Reactor, Value, WaitingFor
+
 EXTRA_NB = 1
 EXTRA_W = 2
 EXTRA_B = 3
@@ -17,26 +19,28 @@ class Wicket(object):
         print("Howzat?")
         # Not Out, bowled, caught, stumped, lbw, run out
         if bowl == 1: # Not Out
-            return None
-        if bowl == 2:
-            return cls("bowled")
-        if bowl == 3:
+            yield Value(None)
+        elif bowl == 2:
+            yield Value(cls("bowled"))
+        elif bowl == 3:
             # batsman: 2d6 to decide where he hits it.  12 goes to 1
-            fielder = field[(batsman.roll_2d6(prompt="Roll 2d6 to pick fielder") - 1) % 11]
+            fielder = field[((yield batsman.roll_2d6(prompt="Roll 2d6 to pick fielder")) - 1) % 11]
             print("In the air to %s..." % (fielder.name,))
             # fielder: roll d6 to catch, drop on 1 or 2
-            if fielder.roll_d6(prompt="Roll to attempt the catch") > 2:
-                return cls("caught", fielder, fielder == bowler)
-            print("Dropped it!")
-            return None
-        if bowl == 4:
+            if (yield fielder.roll_d6(prompt="Roll to attempt the catch")) > 2:
+                yield Value(cls("caught", fielder, fielder == bowler))
+            else:
+                print("Dropped it!")
+                yield Value(None)
+        elif bowl == 4:
             # Wicketkeeper is a roll of 7 on the 2d6
-            return cls("stumped", field[6])
-        if bowl == 5:
-            return cls("lbw")
-        if bowl == 6:
-            return cls("run out")
-        raise Exception("This d6 has a %d?" % (bowl,))
+            yield Value(cls("stumped", field[6]))
+        elif bowl == 5:
+            yield Value(cls("lbw"))
+        elif bowl == 6:
+            yield Value(cls("run out"))
+        else:
+            raise Exception("This d6 has a %d?" % (bowl,))
     def __str__(self):
         if self.how == 'caught' and  self.cab:
             return 'caught & bowled'
@@ -74,19 +78,21 @@ class Ball(object):
         self.legal = not self.nb and not self.w
     @classmethod
     def roll(cls, bowler, batsman, field):
-        bowl = bowler.roll_d6(prompt="Roll to bowl to "+batsman.name)
+        bowl = yield bowler.roll_d6(prompt="Roll to bowl to "+batsman.name)
         extra = None
         if bowl == 1:
             # possible Extra; roll again
-            extra = bowler.roll_d6(prompt="Roll for extras")
+            extra = yield bowler.roll_d6(prompt="Roll for extras")
         if extra == EXTRA_W: # Batsman does not roll
-            return cls(bowler, batsman, 0, extra=extra)
-        bat = batsman.roll_d6(prompt="Roll to play the ball")
-        if bat == 5: # Wicket
-            return cls(bowler, batsman, 0, Wicket.roll(bowl, bowler, batsman, field), extra=extra)
-        if bat == 3: # No run
-            return cls(bowler, batsman, 0, extra=extra)
-        return cls(bowler, batsman, bat, extra=extra)
+            yield Value(cls(bowler, batsman, 0, extra=extra))
+        else:
+            bat = yield batsman.roll_d6(prompt="Roll to play the ball")
+            if bat == 5: # Wicket
+                yield Value(cls(bowler, batsman, 0, (yield Wicket.roll(bowl, bowler, batsman, field)), extra=extra))
+            elif bat == 3: # No run
+                yield Value(cls(bowler, batsman, 0, extra=extra))
+            else:
+                yield Value(cls(bowler, batsman, bat, extra=extra))
     def __str__(self):
         if self.wicket:
             if self.wicket.how == 'run out':
@@ -180,9 +186,12 @@ class Innings(object):
         self.bteam = batting
         self.fteam = fielding
         self.chasing = chasing
-        self.border = list(self.bteam.border)
-        self.non_striker = self.border.pop(0)
-        self.striker = self.border.pop(0)
+        self.to_bat = list(self.bteam.players)
+        self.border = []
+    def start(self):
+        # These will swap ends before the first over
+        self.non_striker = yield self.choose_batsman()
+        self.striker = yield self.choose_batsman()
         self.resting = None
         self.bowling = None
         self.total = 0
@@ -190,27 +199,35 @@ class Innings(object):
         self.lb = 0 # Leg Byes
         self.fow = []
         self.overs = []
-        self.new_over()
+        yield self.new_over()
         self.in_play = True
-    def legal_bowlers(self, last):
-        return [p for p in self.fteam.players if len(p.bowling) < 4 and p != last]
+    def choose_batsman(self):
+        bat = yield self.bteam.captain.choose_batsman(self.to_bat)
+        self.to_bat.remove(bat)
+        self.border.append(bat)
+        yield Value(bat)
+    def legal_bowlers(self):
+        return [p for p in self.fteam.players if len(p.bowling) < 4 and p != self.resting]
     def swap_strike(self):
         self.striker, self.non_striker = self.non_striker, self.striker
+    def choose_keeper(self, keep):
+        if keep.keeper:
+            return
+        ki = self.fteam.field.index(keep)
+        self.bowling.keeper = False
+        keep.keeper = True
+        self.fteam.field[ki], self.fteam.field[6] = self.fteam.field[6], self.fteam.field[ki]
     def new_over(self):
         self.bowling, self.resting = self.resting, self.bowling
         self.fteam.field[0], self.fteam.field[1] = self.fteam.field[1], self.fteam.field[0]
-        legal = self.legal_bowlers(self.resting)
-        if self.bowling not in legal or self.fteam.captain.change_bowler(self.bowling):
-            bowl = self.fteam.captain.choose_bowler(legal)
+        bowl = yield self.fteam.captain.maybe_choose_bowler(self)
+        if bowl != self.bowling:
             bi = self.fteam.field.index(bowl)
             self.fteam.field[0], self.fteam.field[bi] = self.fteam.field[bi], self.fteam.field[0]
             self.bowling = bowl
-        if self.bowling.keeper:
-            keep = self.fteam.captain.choose_keeper([p for p in self.fteam if p != self.bowling])
-            ki = self.fteam.field.index(keep)
-            self.bowling.keeper = False
-            keep.keeper = True
-            self.fteam.field[ki], self.fteam.field[6] = self.fteam.field[6], self.fteam.field[ki]
+        if self.bowling.keeper: # Local captains only
+            keep = yield self.fteam.captain.choose_keeper([p for p in self.fteam if p != self.bowling])
+            self.choose_keeper(keep)
         self.swap_strike()
         self.overs.append(Over(self))
         if self.chasing is None:
@@ -228,16 +245,16 @@ class Innings(object):
         return self.over.over(len(self.overs))
     def bowl(self):
         if not self.over.to_come:
-            self.new_over()
-        ball = Ball.roll(self.bowling, self.striker, self.fteam.field)
+            yield self.new_over()
+        ball = yield Ball.roll(self.bowling, self.striker, self.fteam.field)
         self.over.deliver(ball)
         self.striker.score(ball)
         print(str(ball))
         if ball.wicket:
             self.striker.out = ball
             self.fow.append((self.striker, self.total, self.odesc))
-            if self.border:
-                self.striker = self.border.pop(0)
+            if self.to_bat:
+                self.striker = yield self.choose_batsman()
             else:
                 self.in_play = False
         elif ball.runs % 2:
@@ -255,16 +272,15 @@ class Innings(object):
     def batting_summary(self):
         if self.chasing is not None:
             print("Chasing %d" % (self.chasing,))
-        for bat in self.bteam.border:
-            if bat in self.border:
-                print("%s  did not bat" % (bat.name,))
-            else:
-                stones = '' # Batting milestones
-                if bat.fifty:
-                    stones = ' [L%d]' % bat.fifty
-                if bat.hundred:
-                    stones += ' [C%d]' % bat.hundred
-                print("%s  %s  %s%d (%d%s)" % (bat.name, ''.join(b.batstr() for b in bat.innings).replace('..', ':'), '' if bat.out else 'not  out  ', bat.scored, bat.faced, stones))
+        for bat in self.border:
+            stones = '' # Batting milestones
+            if bat.fifty:
+                stones = ' [L%d]' % bat.fifty
+            if bat.hundred:
+                stones += ' [C%d]' % bat.hundred
+            print("%s  %s  %s%d (%d%s)" % (bat.name, ''.join(b.batstr() for b in bat.innings).replace('..', ':'), '' if bat.out else 'not  out  ', bat.scored, bat.faced, stones))
+        for bat in self.to_bat:
+            print("%s  did not bat" % (bat.name,))
         def sfow(fow):
             i, fow = fow
             bat, tot, ovs = fow
@@ -321,6 +337,15 @@ class Player(object):
         r = a + b
         print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
         return r
+    def maybe_choose_bowler(self, inns):
+        curr = inns.bowling
+        legal = inns.legal_bowlers()
+        if curr not in legal or self.change_bowler(curr):
+            return self.choose_bowler(legal)
+        return curr
+    def choose_batsman(self, legal):
+        # Use the default batting order
+        return legal[0]
     def score(self, ball):
         self.innings.append(ball)
         if self.fifty is None and self.scored >= 50:
@@ -463,8 +488,7 @@ class Team(object):
         self.name = name
         self.players = players
         self.captain = self.players[0]
-        # For now, hardcode the batting-order and fielding-positions
-        self.border = list(players)
+        # For now, hardcode the fielding-positions
         self.field = list(players)
         keep = self.captain.choose_keeper(self.field)
         keep.keeper = True
@@ -485,34 +509,39 @@ def toss(TA, TB):
     CA = TA.captain
     CB = TB.captain
     # True is Tails
-    call = CA.call_toss()
+    call = yield CA.call_toss()
     print("%s called %s" % (CA.name, "tails" if call else "heads"))
-    coin = CB.flip_coin()
+    coin = yield CB.flip_coin()
     print("The coin landed %s up" % ("tails" if coin else "heads"))
     if call == coin:
-        if CA.choose_to_bat():
+        if (yield CA.choose_to_bat()):
             print("%s won the toss and elected to bat" % (TA.name,))
-            return (TA, TB)
+            yield Value((TA, TB))
+            return
         print("%s won the toss and elected to field" % (TA.name,))
-        return (TB, TA)
-    if CB.choose_to_bat():
+        yield Value((TB, TA))
+        return
+    if (yield CB.choose_to_bat()):
         print("%s won the toss and elected to bat" % (TB.name,))
-        return (TB, TA)
+        yield Value((TB, TA))
+        return
     print("%s won the toss and elected to field" % (TB.name,))
-    return (TA, TB)
+    yield Value((TA, TB))
 
 def play_match(TA, TB):
-    TA, TB = toss(TA, TB)
+    TA, TB = yield toss(TA, TB)
     IA = Innings(TA, TB)
+    yield IA.start()
     while IA.in_play:
-        IA.bowl()
+        yield IA.bowl()
     print()
     IA.batting_summary()
     IA.bowling_summary()
     print()
     IB = Innings(TB, TA, IA.total)
+    yield IB.start()
     while IB.in_play:
-        IB.bowl()
+        yield IB.bowl()
     print()
     IB.batting_summary()
     IB.bowling_summary()
@@ -528,13 +557,19 @@ def test():
     """Test-run: play a match between two placeholder teams"""
     TA = Team.det("TA")
     TB = Team.det("TB")
-    play_match(TA, TB)
+    r = Reactor()
+    r.start_thread(play_match(TA, TB))
+    while r.step_running():
+        pass
 
 def cons_vs_rand():
     """Console player versus random player"""
     TA = Team.cons("Con")
     TB = Team.rand("Opp")
-    play_match(TA, TB)
+    r = Reactor()
+    r.start_thread(play_match(TA, TB))
+    while r.step_running():
+        pass
 
 if __name__ == '__main__':
     cons_vs_rand()
