@@ -133,8 +133,8 @@ class Client(object):
         self.dbg = debug
         self.rxbuf = b''
         self.txbuf = b''
-        self.registered = False
         self.name = sock.fileno()
+        self.room = None
         self.send('welcome', version=SERVER_VERSION, message=self.server.motd)
     def debug(self, cls, *args):
         if self.dbg:
@@ -179,6 +179,22 @@ class Client(object):
         j = json.dumps(d) + '\n'
         self.txbuf += j.encode('utf8')
 
+class Room(object):
+    def __init__(self, server):
+        self.server = server
+        self.occupants = set()
+    def enter(self, c):
+        self.occupants.add(c)
+        c.room = self
+    def exit(self, c):
+        if c.room != self:
+            raise Exception("Not in room", c.name, "tried to exit")
+        self.occupants.remove(c)
+        c.room = None
+    def wall(self, frm, message):
+        for client in self.occupants:
+            client.send('wall', frm=frm.name, message=message)
+
 class Server(object):
     def __init__(self, port=0x6666, motd=DEFAULT_MOTD, debug=0):
         self.sock = socket.socket()
@@ -188,6 +204,7 @@ class Server(object):
         self.motd = motd
         self.dbg = debug
         self.clients = {}
+        self.lobby = Room(self)
     def debug(self, *args):
         if self.dbg:
             print(' '.join(map(str, args)))
@@ -199,7 +216,7 @@ class Server(object):
     def handle(self, client, msg):
         typ = msg.get('type')
         if typ == 'hello':
-            if client.registered:
+            if client.room:
                 return client.send('error', message='Already registered')
             username = msg.get('username')
             if not isinstance(username, str):
@@ -209,12 +226,21 @@ class Server(object):
             del self.clients[client.name]
             client.name = username
             self.clients[client.name] = client
+            self.lobby.enter(client)
             return
         if typ == 'goodbye':
             self.debug('Goodbye', client.name)
             self.try_shutdown(client.sock)
             client.sock = None
             del self.clients[client.name]
+            return
+        if typ == 'wall':
+            if not client.room:
+                client.send('error', message="Not in a room, can't wall")
+                return
+            message = msg.get('message')
+            if message:
+                client.room.wall(client, message)
             return
         client.send('error', message="Unhandled message 'type': %r" % (typ,))
         raise Exception("Unhandled message from", client.name, msg)
