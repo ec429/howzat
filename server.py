@@ -7,8 +7,6 @@ import sys
 import coroutine
 import howzat
 
-Value = coroutine.Value
-
 SERVER_VERSION = [1, 0, 0]
 DEFAULT_MOTD = "Welcome to the Howzat server."
 
@@ -37,7 +35,7 @@ class RemotePlayer(howzat.Player):
         t = time.time() % 0.001
         r = bool(int((t * 2000.0) % 2))
         print("%s flipped %s" % (self.name, "tails" if r else "heads"))
-        yield Value(r)
+        return r
     def roll_d6(self, prompt=None):
         # Wait for client to trigger
         while True:
@@ -48,7 +46,7 @@ class RemotePlayer(howzat.Player):
         t = time.time() % 0.001
         r = (int(t * 6000.0) % 6) + 1
         print("%s rolled d6 %s" % (self.name, chr(0x267f + r)))
-        yield Value(r)
+        return r
     def roll_2d6(self, prompt=None):
         # Wait for client to trigger
         while True:
@@ -61,7 +59,7 @@ class RemotePlayer(howzat.Player):
         b = (int(t * 36000.0) % 6) + 1
         r = a + b
         print("%s rolled 2d6 %s%s -> %d" % (self.name, chr(0x267f + a), chr(0x267f + b), r))
-        yield Value(r)
+        return r
     def call_toss(self):
         while True:
             self.client.action('call toss')
@@ -69,7 +67,7 @@ class RemotePlayer(howzat.Player):
             if d is None: # reconnected
                 continue
             if isinstance(d.get('tails'), bool):
-                yield Value(d['tails'])
+                return d['tails']
             self.client.error("'call toss' requires 'tails': bool")
     def choose_to_bat(self):
         while True:
@@ -78,7 +76,7 @@ class RemotePlayer(howzat.Player):
             if d is None: # reconnected
                 continue
             if isinstance(d.get('bat'), bool):
-                yield Value(d['bat'])
+                return d['bat']
             self.client.error("'choose first' requires 'bat': bool")
     def maybe_choose_bowler(self, inns):
         curr = inns.bowling
@@ -101,7 +99,7 @@ class RemotePlayer(howzat.Player):
                 if p.keeper:
                     self.client.error("'choose bowler': 'bowler': %s is currently keeping wicket (try 'choose keeper' to change)" % p.name)
                     continue
-                yield Value(p)
+                return p
             self.client.error("'choose bowler' requires a 'bowler' from legal list")
     def choose_keeper(self, legal):
         legal_names = dict((p.name, p) for p in legal)
@@ -111,7 +109,7 @@ class RemotePlayer(howzat.Player):
             if d is None: # reconnected
                 continue
             if d.get('keeper') in legal_names:
-                yield Value(legal_names[d['keeper']])
+                return legal_names[d['keeper']]
             self.client.error("'choose keeper' requires a 'keeper' from legal list")
     def choose_batsman(self, legal):
         legal_names = dict((p.name, p) for p in legal)
@@ -121,7 +119,7 @@ class RemotePlayer(howzat.Player):
             if d is None: # reconnected
                 continue
             if d.get('batsman') in legal_names:
-                yield Value(legal_names[d['batsman']])
+                return legal_names[d['batsman']]
             self.client.error("'next bat' requires a 'batsman' from legal list")
 
 class SocketClosed(Exception): pass
