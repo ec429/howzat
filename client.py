@@ -7,6 +7,7 @@ import socket
 import sys
 
 class Croaked(Exception): pass
+class SocketClosed(Exception): pass
 
 class Connection(object):
     def __init__(self, host='localhost', port=0x6666, username=getpass.getuser(), playername=None):
@@ -19,25 +20,43 @@ class Connection(object):
             raise
         self.username = username
         self.playername = playername
+        self.register()
+    def debug(self, cls, *args):
+        pass
+    def debug_rx(self, *args):
+        self.debug('rx', *args)
+    def debug_tx(self, *args):
+        self.debug('tx', *args)
+    def try_shutdown(self):
         try:
-            self.register()
-        except Exception as e:
-            self.croak("Register failed: %s" % e)
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
     def read_msg(self):
         while b'\n' not in self.buf:
             self.buf += self.sock.recv(256)
         msg, _, self.buf = self.buf.partition(b'\n')
-        return json.loads(msg.decode('utf8'))
+        d = json.loads(msg.decode('utf8'))
+        self.debug_rx(d)
+        return d
     def maybe_read_msg(self, timeout=0.1):
         if b'\n' not in self.buf:
             r, w, x = select.select((self.sock.fileno(),), (), (), timeout)
             if self.sock.fileno() in r:
-                self.buf += self.sock.recv(256)
+                data = self.sock.recv(256)
+                if not len(data):
+                    self.sock.close()
+                    self.sock = None
+                    raise SocketClosed('End-of-file condition on socket')
+                self.buf += data
         if b'\n' not in self.buf:
             return None
         msg, _, self.buf = self.buf.partition(b'\n')
-        return json.loads(msg.decode('utf8'))
+        d = json.loads(msg.decode('utf8'))
+        self.debug_rx(d)
+        return d
     def write_msg(self, d):
+        self.debug_tx(d)
         j = json.dumps(d) + '\n'
         while j:
             b = self.sock.send(j.encode('utf8'))
@@ -47,7 +66,7 @@ class Connection(object):
             self.write_msg({'type': 'error', 'error': str(msg)})
         except Exception as e:
             print("Failed to croak %r: %s" % (msg, e))
-        self.sock.shutdown(socket.SHUT_RDWR)
+        self.try_shutdown()
         self.sock = None
         if not swallow:
             raise Croaked(msg)
@@ -75,7 +94,7 @@ class Connection(object):
         if msg is not None:
             gb['message'] = msg
         self.write_msg(gb)
-        self.sock.shutdown(socket.SHUT_RDWR)
+        self.try_shutdown()
         self.sock = None
     def maybe_read_and_handle(self, timeout=0.1):
         msg = self.maybe_read_msg(timeout=timeout)
@@ -217,9 +236,13 @@ class ConsoleClient(Connection):
         self.in_invite_join = set()
         self.cons = sys.stdin
         self.halt = False
+        self.dbg = kwargs.pop('debug', False)
         super(ConsoleClient, self).__init__(**kwargs)
         print("%s Server version %s" % (self.tagify(), '.'.join(map(str, self.server_version))))
         print("%s %s" % (self.tagify(), self.motd))
+    def debug(self, cls, *args):
+        if self.dbg:
+            print("DBG %s: %s" % (cls, ' '.join(map(str, args))))
     def main(self):
         try:
             r, w, x = select.select((self.cons.fileno(),), (), (), 0)
@@ -229,6 +252,9 @@ class ConsoleClient(Connection):
             if self.halt:
                 return
             self.maybe_read_and_handle()
+        except SocketClosed as e:
+            print(e)
+            self.halt = True
         except Exception as e:
             self.croak("main loop: %r" % e, True)
             raise
@@ -254,7 +280,7 @@ class ConsoleClient(Connection):
             return getattr(self, method)(*args)
         print("Unrecognised command /%s" % cmd)
     def cmd_quit(self, *messages):
-        self.goodbye(' '.join(messages))
+        self.goodbye(' '.join(messages) or 'Client quit')
         self.halt = True
     def tagify(self, bracks='_', frm=None, w=16):
         if frm is None:
@@ -262,6 +288,8 @@ class ConsoleClient(Connection):
         else:
             tag = bracks[0] + frm + bracks[-1]
         return tag.rjust(w)
+    def handle_error(self, message):
+        print("error: %s" % (message,))
     def handle_wall(self, message, frm):
         print("%s %s" % (self.tagify('{}', frm), message))
     def handle_message(self, message, frm=None):
@@ -285,4 +313,4 @@ class ConsoleClient(Connection):
 #    def handle_accept_new(self, frm):
 #        
 
-ConsoleClient().main_loop()
+ConsoleClient(debug=True).main_loop()
