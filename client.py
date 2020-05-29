@@ -21,6 +21,7 @@ class Connection(object):
         self.username = username
         self.playername = playername
         self.register()
+        self.room = set()
     def debug(self, cls, *args):
         pass
     def debug_rx(self, *args):
@@ -110,7 +111,17 @@ class Connection(object):
                     return getattr(self, method)(**msg)
                 except Exception as e:
                     self.croak("Failed to handle message %s: %r" % (json.dumps(msg), e))
-        self.croak("Unhandled message type: %s" % json.dumps(msg))
+        self.croak("Unhandled message type: %s %s" % (typ, json.dumps(msg)))
+    def handle_enter(self, user):
+        if user == self.username:
+            self.room = set()
+        else:
+            self.room.add(user)
+    def handle_exit(self, user):
+        if user == self.username:
+            self.room = set()
+        else:
+            self.room.remove(user)
     def handle_invite(self, invitation, **kwargs):
         d = {'type': 'invite', 'invitation': invitation}
         d.update(kwargs)
@@ -277,7 +288,11 @@ class ConsoleClient(Connection):
         cmd, *args = words
         method = 'cmd_' + cmd
         if hasattr(self, method):
-            return getattr(self, method)(*args)
+            try:
+                return getattr(self, method)(*args)
+            except Exception as e:
+                print('Command handler:', e)
+                return
         print("Unrecognised command /%s" % cmd)
     def cmd_quit(self, *messages):
         self.goodbye(' '.join(messages) or 'Client quit')
@@ -294,6 +309,12 @@ class ConsoleClient(Connection):
         print("%s %s" % (self.tagify('{}', frm), message))
     def handle_message(self, message, frm=None):
         print("%s %s" % (self.tagify('<>', frm), message))
+    def handle_enter(self, user):
+        super(ConsoleClient, self).handle_enter(user)
+        print("%s entered the room" % (self.tagify('=', user),))
+    def handle_exit(self, user):
+        super(ConsoleClient, self).handle_exit(user)
+        print("%s left the room" % (self.tagify('=', user),))
     def handle_invite_new(self, frm):
         print("%s invited you to start a game!  /accept or /reject it." % self.tagify('=', frm))
         self.in_invite_new.add(frm)

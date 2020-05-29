@@ -127,6 +127,18 @@ Clients may display the `message` to the user.
 
 ### Lobby messages
 
+#### Enter lobby
+
+Server: `{'type': 'enter', 'user': <username>}`
+
+`username` entered the lobby, either by registering or by leaving a game.
+
+#### Exit lobby
+
+Server: `{'type': 'exit', 'user': <username>}`
+
+`username` left the lobby, either by disconnecting or by entering a game.
+
 #### Propose new game
 
 Client: `{'type': 'invite', 'invitation': 'new', 'to': <username>}`

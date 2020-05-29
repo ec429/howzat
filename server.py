@@ -184,11 +184,17 @@ class Room(object):
         self.server = server
         self.occupants = set()
     def enter(self, c):
+        c.send('enter', user=c.name)
+        for o in self.occupants:
+            o.send('enter', user=c.name)
+            c.send('enter', user=o.name)
         self.occupants.add(c)
         c.room = self
     def exit(self, c):
         if c.room != self:
             raise Exception("Not in room", c.name, "tried to exit")
+        for o in self.occupants:
+            o.send('exit', user=c.name)
         self.occupants.remove(c)
         c.room = None
     def wall(self, frm, message):
@@ -221,6 +227,8 @@ class Server(object):
             username = msg.get('username')
             if not isinstance(username, str):
                 return client.send('error', message="Bad 'username' in 'hello'")
+            if username in self.clients:
+                return client.send('error', message="Username already in use")
             self.debug('Renamed', client.name, 'to', username)
             # Client rename means its key in self.clients changes
             del self.clients[client.name]
@@ -233,6 +241,8 @@ class Server(object):
             self.try_shutdown(client.sock)
             client.sock = None
             del self.clients[client.name]
+            if client.room:
+                client.room.exit(client)
             return
         if typ == 'wall':
             if not client.room:
