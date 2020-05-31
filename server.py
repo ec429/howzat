@@ -219,39 +219,42 @@ class Server(object):
             pass
     def handle(self, client, msg):
         typ = msg.get('type')
-        if typ == 'hello':
-            if client.room:
-                return client.send('error', message='Already registered')
-            username = msg.get('username')
-            if not isinstance(username, str):
-                return client.send('error', message="Bad 'username' in 'hello'")
-            if username in self.clients:
-                return client.send('error', message="Username already in use")
-            self.debug('Renamed', client.name, 'to', username)
-            # Client rename means its key in self.clients changes
-            del self.clients[client.name]
-            client.name = username
-            self.clients[client.name] = client
-            self.lobby.enter(client)
+        if isinstance(typ, str):
+            method = 'handle_'+typ
+            if hasattr(self, method):
+                try:
+                    return getattr(self, method)(client, msg)
+                except Exception as e:
+                    print("Failed to handle message %s: %r" % (json.dumps(msg), e))
+        print("Unhandled message type: %s %s" % (typ, json.dumps(msg)))
+    def handle_hello(self, client, msg):
+        if client.room:
+            return client.send('error', message='Already registered')
+        username = msg.get('username')
+        if not isinstance(username, str):
+            return client.send('error', message="Bad 'username' in 'hello'")
+        if username in self.clients:
+            return client.send('error', message="Username already in use")
+        self.debug('Renamed', client.name, 'to', username)
+        # Client rename means its key in self.clients changes
+        del self.clients[client.name]
+        client.name = username
+        self.clients[client.name] = client
+        self.lobby.enter(client)
+    def handle_goodbye(self, client, msg):
+        self.debug('Goodbye', client.name)
+        self.try_shutdown(client.sock)
+        client.sock = None
+        del self.clients[client.name]
+        if client.room:
+            client.room.exit(client)
+    def handle_wall(self, client, msg):
+        if not client.room:
+            client.send('error', message="Not in a room, can't wall")
             return
-        if typ == 'goodbye':
-            self.debug('Goodbye', client.name)
-            self.try_shutdown(client.sock)
-            client.sock = None
-            del self.clients[client.name]
-            if client.room:
-                client.room.exit(client)
-            return
-        if typ == 'wall':
-            if not client.room:
-                client.send('error', message="Not in a room, can't wall")
-                return
-            message = msg.get('message')
-            if message:
-                client.room.wall(client, message)
-            return
-        client.send('error', message="Unhandled message 'type': %r" % (typ,))
-        raise Exception("Unhandled message from", client.name, msg)
+        message = msg.get('message')
+        if message:
+            client.room.wall(client, message)
     def halt(self):
         self.debug('Shutting down')
         self.sock.close()
