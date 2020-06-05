@@ -1,6 +1,7 @@
 #!/usr/bin/python3
-import json
+import argparse
 import getpass
+import json
 import select
 import shlex
 import socket
@@ -29,6 +30,8 @@ class Connection(object):
     def debug_tx(self, *args):
         self.debug('tx', *args)
     def try_shutdown(self):
+        if self.sock is None:
+            return
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -109,6 +112,8 @@ class Connection(object):
             if hasattr(self, method):
                 try:
                     return getattr(self, method)(**msg)
+                except Croaked:
+                    raise
                 except Exception as e:
                     self.croak("Failed to handle message %s: %r" % (json.dumps(msg), e))
         self.croak("Unhandled message type: %s %s" % (typ, json.dumps(msg)))
@@ -181,19 +186,19 @@ class Connection(object):
     def message(self, msg, to):
         self.write_msg({'type': 'message', 'message': str(msg), 'to': str(to)})
     def invite_game(self, to):
-        self.write_msg({'type': 'invite', 'invitation': 'new game', 'to': str(to)})
+        self.write_msg({'type': 'invite', 'invitation': 'new', 'to': str(to)})
     def revoke_game(self, to):
-        self.write_msg({'type': 'revoke', 'invitation': 'new game', 'to': str(to)})
+        self.write_msg({'type': 'revoke', 'invitation': 'new', 'to': str(to)})
     def accept_game(self, to):
-        self.write_msg({'type': 'join', 'invitation': 'new game', 'to': str(to)})
+        self.write_msg({'type': 'accept', 'invitation': 'new', 'to': str(to)})
     def reject_game(self, to):
-        self.write_msg({'type': 'reject', 'invitation': 'new game', 'to': str(to)})
+        self.write_msg({'type': 'reject', 'invitation': 'new', 'to': str(to)})
     def invite_join(self, to):
         self.write_msg({'type': 'invite', 'invitation': 'join', 'to': str(to)})
     def revoke_join(self, to):
         self.write_msg({'type': 'revoke', 'invitation': 'join', 'to': str(to)})
     def accept_join(self, to):
-        self.write_msg({'type': 'join', 'invitation': 'join', 'to': str(to)})
+        self.write_msg({'type': 'accept', 'invitation': 'join', 'to': str(to)})
     def reject_join(self, to):
         self.write_msg({'type': 'reject', 'invitation': 'join', 'to': str(to)})
     def leave_game(self):
@@ -266,9 +271,12 @@ class ConsoleClient(Connection):
         except SocketClosed as e:
             print(e)
             self.halt = True
+        except Croaked:
+            self.halt = True
+            raise
         except Exception as e:
             self.croak("main loop: %r" % e, True)
-            raise
+            self.halt = True
     def main_loop(self):
         while not self.halt:
             self.main()
@@ -291,12 +299,50 @@ class ConsoleClient(Connection):
             try:
                 return getattr(self, method)(*args)
             except Exception as e:
-                print('Command handler:', e)
+                print('Command handler: /%s:' % (cmd,), e)
                 return
         print("Unrecognised command /%s" % cmd)
     def cmd_quit(self, *messages):
         self.goodbye(' '.join(messages) or 'Client quit')
         self.halt = True
+    def cmd_invite(self, to):
+        self.invite_game(to)
+    def cmd_accept(self, to, what=None):
+        if what is None:
+            if to in self.in_invite_new:
+                if to in self.in_invite_join:
+                    raise Exception("Ambiguous - specify '/accept <user> new' or '/accept <user> join'")
+                return self.accept_game(to)
+            if to in self.in_invite_join:
+                return self.accept_join(to)
+            raise Exception("No invite outstanding for new or join from", to)
+        if what == 'new':
+            if to not in self.in_invite_new:
+                print("No new-game invite outstanding from %s; trying anyway" % (to,))
+            return self.accept_game(to)
+        if what == 'join':
+            if to not in self.in_invite_join:
+                print("No join-game invite outstanding from %s; trying anyway" % (to,))
+            return self.accept_join(to)
+        raise Exception("<what> must be 'new' or 'join', not %s" % (what,))
+    def cmd_reject(self, to, what=None):
+        if what is None:
+            if to in self.in_invite_new:
+                if to in self.in_invite_join:
+                    raise Exception("Ambiguous - specify '/reject <user> new' or '/reject <user> join'")
+                return self.reject_game(to)
+            if to in self.in_invite_join:
+                return self.reject_join(to)
+            raise Exception("No invite outstanding for new or join from", to)
+        if what == 'new':
+            if to not in self.in_invite_new:
+                print("No new-game invite outstanding from %s; trying anyway" % (to,))
+            return self.reject_game(to)
+        if what == 'join':
+            if to not in self.in_invite_join:
+                print("No join-game invite outstanding from %s; trying anyway" % (to,))
+            return self.reject_join(to)
+        raise Exception("<what> must be 'new' or 'join', not %s" % (what,))
     def tagify(self, bracks='_', frm=None, w=16):
         if frm is None:
             tag = '-'
@@ -315,6 +361,9 @@ class ConsoleClient(Connection):
     def handle_exit(self, user):
         super(ConsoleClient, self).handle_exit(user)
         print("%s left the room" % (self.tagify('=', user),))
+        # Revoke any outstanding invites
+        self.in_invite_new.discard(user)
+        self.in_invite_join.discard(user)
     def handle_invite_new(self, frm):
         print("%s invited you to start a game!  /accept or /reject it." % self.tagify('=', frm))
         self.in_invite_new.add(frm)
@@ -334,4 +383,8 @@ class ConsoleClient(Connection):
 #    def handle_accept_new(self, frm):
 #        
 
-ConsoleClient(debug=True).main_loop()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Command-line client for networked Howzat game')
+    parser.add_argument('-u', '--username', default=getpass.getuser())
+    args = parser.parse_args()
+    ConsoleClient(username=args.username, debug=True).main_loop()

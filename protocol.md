@@ -161,11 +161,11 @@ The client was invited to join a team captained by `username`.
 
 #### Accept invitation
 
-Client: `{'type': 'join', 'invitation': <invitation>, 'to': <username>}`
+Client: `{'type': 'accept', 'invitation': <invitation>, 'to': <username>}`
 
 Accept an outstanding `invitation` from `username`.
 
-Server: `{'type': 'join', 'invitation': <invitation>, 'frm': <username>}`
+Server: `{'type': 'accept', 'invitation': <invitation>, 'frm': <username>}`
 
 An outstanding invitation from the client was accepted by `username`.
 This message will typically be followed by another (broadcast to the room)

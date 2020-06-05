@@ -19,6 +19,8 @@ class WaitForAction(coroutine.WaitingFor):
 class RemotePlayer(howzat.Player):
     def __init__(self, name, client):
         self.client = client
+        if name is None:
+            name = client.name
         super(RemotePlayer, self).__init__(name)
     def wait_for_action(self, *actions):
         return WaitForAction(self, *actions)
@@ -132,8 +134,10 @@ class Client(object):
         self.rxbuf = b''
         self.txbuf = b''
         self.name = sock.fileno()
+        self.playername = None
         self.room = None
         self.send('welcome', version=SERVER_VERSION, message=self.server.motd)
+        self.in_invites = {'new': set(), 'game': set()}
     def debug(self, cls, *args):
         if self.dbg:
             print('DBG %s %s' % (cls, ' '.join(map(str, args))))
@@ -195,9 +199,24 @@ class Room(object):
             o.send('exit', user=c.name)
         self.occupants.remove(c)
         c.room = None
+    def __contains__(self, c):
+        return c in self.occupants
     def wall(self, frm, message):
         for client in self.occupants:
             client.send('wall', frm=frm.name, message=message)
+
+class Game(Room):
+    def __init__(self, server, *captains):
+        super(Game, self).__init__(server)
+        self.teams = {c: set() for c in captains}
+        self.clients = set(captains)
+        for c in captains:
+            p = RemotePlayer(c.playername, c)
+            self.teams[c].add(p)
+            self.enter(c)
+            for d in self.clients:
+                d.send('join', frm=c.name, player=p.name, team=c.name)
+        self.server.games.add(self)
 
 class Server(object):
     def __init__(self, port=0x6666, motd=DEFAULT_MOTD, debug=0):
@@ -209,6 +228,7 @@ class Server(object):
         self.dbg = debug
         self.clients = {}
         self.lobby = Room(self)
+        self.games = set()
     def debug(self, *args):
         if self.dbg:
             print(' '.join(map(str, args)))
@@ -225,7 +245,7 @@ class Server(object):
                 try:
                     return getattr(self, method)(client, msg)
                 except Exception as e:
-                    print("Failed to handle message %s: %r" % (json.dumps(msg), e))
+                    return print("Failed to handle message %s: %r" % (json.dumps(msg), e))
         print("Unhandled message type: %s %s" % (typ, json.dumps(msg)))
     def handle_hello(self, client, msg):
         if client.room:
@@ -235,10 +255,13 @@ class Server(object):
             return client.send('error', message="Bad 'username' in 'hello'")
         if username in self.clients:
             return client.send('error', message="Username already in use")
+        playername = msg.get('player')
         self.debug('Renamed', client.name, 'to', username)
         # Client rename means its key in self.clients changes
         del self.clients[client.name]
         client.name = username
+        if playername is not None:
+            client.playername = str(playername)
         self.clients[client.name] = client
         self.lobby.enter(client)
     def handle_goodbye(self, client, msg):
@@ -250,11 +273,62 @@ class Server(object):
             client.room.exit(client)
     def handle_wall(self, client, msg):
         if not client.room:
-            client.send('error', message="Not in a room, can't wall")
-            return
+            return client.send('error', message="Not in a room, can't wall")
         message = msg.get('message')
         if message:
             client.room.wall(client, message)
+    def handle_invite(self, client, msg):
+        invitation = msg.get('invitation')
+        to = self.clients.get(msg.get('to'))
+        if not to:
+            return client.send('error', message="No such 'to' %r in 'invite'" % (to,))
+        if to == client:
+            return client.send('error', message="Can't invite yourself!")
+        if to not in self.lobby:
+            return client.send('error', message="Can't invite: %s is not in lobby" % (to.name,))
+        if invitation == 'new':
+            if client not in self.lobby:
+                return client.send('error', message="Can't invite to new game while not in lobby")
+        elif invitation == 'join':
+            return client.send('error', message="Can't invite to 'join'; not in a game")
+        else:
+            return client.send('error', message="Bad 'invite': unhandled 'invitation' %r" % (invitation,))
+        to.send('invite', invitation=invitation, frm=client.name)
+        to.in_invites[invitation].add(client)
+    def handle_revoke(self, client, msg):
+        invitation = msg.get('invitation')
+        to = self.clients.get(msg.get('to'))
+        if not to:
+            return client.send('error', message="No such 'to' %r in 'revoke'" % (to,))
+        if client not in to.in_invites.get(invitation, set()):
+            return client.send('error', message="No outstanding %r invitation to %s for revoke" % (invitation, to.name))
+        to.in_invites[invitation].remove(client)
+        to.send('revoke', invitation=invitation, frm=client.name)
+    def handle_accept(self, client, msg):
+        invitation = msg.get('invitation')
+        to = self.clients.get(msg.get('to'))
+        if not to:
+            return client.send('error', message="No such 'to' %r in 'accept'" % (to,))
+        if to not in client.in_invites.get(invitation, set()):
+            return client.send('error', message="No outstanding %r invitation from %s for accept" % (invitation, to.name))
+        if invitation == 'new':
+            self.lobby.exit(client)
+            self.lobby.exit(to)
+            g = Game(self, client, to)
+        elif invitation == 'join':
+            return client.send('error', message="Can't accept to 'join'; target is not in a game")
+        else: # can't happen
+            return client.send('error', message="Bad 'accept': unhandled 'invitation' %r" % (invitation,))
+        to.send('accept', invitation=invitation, frm=client.name)
+    def handle_reject(self, client, msg):
+        invitation = msg.get('invitation')
+        to = self.clients.get(msg.get('to'))
+        if not to:
+            return client.send('error', message="No such 'to' %r in 'reject'" % (to,))
+        if to not in client.in_invites.get(invitation, set()):
+            return client.send('error', message="No outstanding %r invitation from %s for reject" % (invitation, to.name))
+        client.in_invites[invitation].remove(to)
+        to.send('reject', invitation=invitation, frm=client.name)
     def halt(self):
         self.debug('Shutting down')
         self.sock.close()
